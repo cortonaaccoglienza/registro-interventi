@@ -1,0 +1,22 @@
+{
+  "name": "Registro Interventi - Villa Santa Margherita",
+  "short_name": "Registro VSM",
+  "description": "Guasti, manutenzioni e magazzino - Villa Santa Margherita",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FBF5E6",
+  "theme_color": "#3B2A1E",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
