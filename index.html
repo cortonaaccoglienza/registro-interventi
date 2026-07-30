@@ -278,8 +278,14 @@
 
       <div class="form-group">
         <label>Foto del problema (opzionale)</label>
-        <input type="file" accept="image/*" capture="environment" id="photo-input">
+        <div style="display:flex;gap:8px;">
+          <button type="button" id="camera-btn" class="submit-btn" style="flex:1;">📷 Scatta foto</button>
+          <button type="button" id="gallery-btn" class="submit-btn" style="flex:1;background:var(--slate);">🖼️ Dalla galleria</button>
+        </div>
+        <input type="file" accept="image/*" capture="environment" id="photo-input-camera" style="display:none;">
+        <input type="file" accept="image/*" id="photo-input-gallery" style="display:none;">
         <img id="photo-preview" style="display:none;max-width:100%;border-radius:8px;margin-top:10px;border:1px solid var(--line);">
+        <button type="button" id="photo-remove-btn" style="display:none;margin-top:8px;font-size:12px;border:1px solid var(--line);background:var(--card);border-radius:6px;padding:6px 10px;cursor:pointer;color:var(--rust);">Rimuovi foto</button>
       </div>
 
       <div class="form-group">
@@ -969,17 +975,43 @@
         mediaRecorder.stop();
         return;
       }
+      var statusEl = document.getElementById("record-status");
+      if(!window.isSecureContext){
+        statusEl.textContent = "La registrazione richiede una connessione sicura (https). Verifica l'indirizzo del sito.";
+        return;
+      }
+      if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+        statusEl.textContent = "Questo browser non supporta la registrazione audio da questa pagina.";
+        return;
+      }
+      if(typeof MediaRecorder === "undefined"){
+        statusEl.textContent = "Questo browser non supporta la registrazione audio (MediaRecorder non disponibile).";
+        return;
+      }
       try{
+        statusEl.textContent = "Richiesta permesso microfono...";
         var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         recordedChunks = [];
         recordedAudioBase64 = null;
-        var mime = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
-        mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
-        recordedAudioType = mime;
+        var mime = "";
+        if(MediaRecorder.isTypeSupported("audio/webm")) mime = "audio/webm";
+        else if(MediaRecorder.isTypeSupported("audio/mp4")) mime = "audio/mp4";
+        else if(MediaRecorder.isTypeSupported("audio/ogg")) mime = "audio/ogg";
+        mediaRecorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+        recordedAudioType = mediaRecorder.mimeType || mime || "audio/webm";
         mediaRecorder.ondataavailable = function(e){ if(e.data.size > 0) recordedChunks.push(e.data); };
+        mediaRecorder.onerror = function(e){
+          statusEl.textContent = "Errore durante la registrazione: "+(e.error ? e.error.name : "sconosciuto");
+        };
         mediaRecorder.onstop = function(){
           stream.getTracks().forEach(function(t){ t.stop(); });
           var blob = new Blob(recordedChunks, { type: recordedAudioType });
+          if(blob.size === 0){
+            statusEl.textContent = "Nessun audio registrato, riprova.";
+            recordBtn.textContent = "Avvia registrazione";
+            recordBtn.classList.remove("recording");
+            return;
+          }
           var reader = new FileReader();
           reader.onloadend = function(){
             recordedAudioBase64 = reader.result;
@@ -990,43 +1022,62 @@
           reader.readAsDataURL(blob);
           recordBtn.textContent = "Registra di nuovo";
           recordBtn.classList.remove("recording");
-          document.getElementById("record-status").textContent = "Registrazione completata.";
+          statusEl.textContent = "Registrazione completata.";
         };
         mediaRecorder.start();
         recordBtn.textContent = "Ferma registrazione";
         recordBtn.classList.add("recording");
-        document.getElementById("record-status").textContent = "Registrazione in corso...";
+        statusEl.textContent = "Registrazione in corso...";
       }catch(err){
-        alert("Impossibile accedere al microfono. Verifica i permessi del browser.");
+        var msg = "Impossibile accedere al microfono.";
+        if(err && err.name === "NotAllowedError") msg = "Permesso microfono negato. Controlla le impostazioni del sito nel browser.";
+        else if(err && err.name === "NotFoundError") msg = "Nessun microfono trovato su questo dispositivo.";
+        else if(err && err.name) msg = "Errore microfono: "+err.name;
+        statusEl.textContent = msg;
       }
     });
   }
 
-  // photo capture
-  var photoInput = document.getElementById("photo-input");
-  if(photoInput){
-    photoInput.addEventListener("change", function(){
-      var file = photoInput.files[0];
-      if(!file) return;
-      var reader = new FileReader();
-      reader.onload = function(ev){
-        var img = new Image();
-        img.onload = function(){
-          var maxDim = 900;
-          var w = img.width, h = img.height;
-          if(w > h && w > maxDim){ h = Math.round(h * maxDim / w); w = maxDim; }
-          else if(h > maxDim){ w = Math.round(w * maxDim / h); h = maxDim; }
-          var canvas = document.createElement("canvas");
-          canvas.width = w; canvas.height = h;
-          canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-          pendingPhotoDataUrl = canvas.toDataURL("image/jpeg", 0.65);
-          var preview = document.getElementById("photo-preview");
-          preview.src = pendingPhotoDataUrl;
-          preview.style.display = "block";
-        };
-        img.src = ev.target.result;
+  // photo capture (fotocamera diretta + galleria)
+  function handlePhotoFile(file){
+    if(!file) return;
+    var reader = new FileReader();
+    reader.onload = function(ev){
+      var img = new Image();
+      img.onload = function(){
+        var maxDim = 900;
+        var w = img.width, h = img.height;
+        if(w > h && w > maxDim){ h = Math.round(h * maxDim / w); w = maxDim; }
+        else if(h > maxDim){ w = Math.round(w * maxDim / h); h = maxDim; }
+        var canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        pendingPhotoDataUrl = canvas.toDataURL("image/jpeg", 0.65);
+        var preview = document.getElementById("photo-preview");
+        preview.src = pendingPhotoDataUrl;
+        preview.style.display = "block";
+        document.getElementById("photo-remove-btn").style.display = "inline-block";
       };
-      reader.readAsDataURL(file);
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+  var photoInputCamera = document.getElementById("photo-input-camera");
+  var photoInputGallery = document.getElementById("photo-input-gallery");
+  var cameraBtn = document.getElementById("camera-btn");
+  var galleryBtn = document.getElementById("gallery-btn");
+  if(cameraBtn) cameraBtn.addEventListener("click", function(){ photoInputCamera.click(); });
+  if(galleryBtn) galleryBtn.addEventListener("click", function(){ photoInputGallery.click(); });
+  if(photoInputCamera) photoInputCamera.addEventListener("change", function(){ handlePhotoFile(photoInputCamera.files[0]); });
+  if(photoInputGallery) photoInputGallery.addEventListener("change", function(){ handlePhotoFile(photoInputGallery.files[0]); });
+  var photoRemoveBtn = document.getElementById("photo-remove-btn");
+  if(photoRemoveBtn){
+    photoRemoveBtn.addEventListener("click", function(){
+      pendingPhotoDataUrl = null;
+      document.getElementById("photo-preview").style.display = "none";
+      document.getElementById("photo-remove-btn").style.display = "none";
+      photoInputCamera.value = "";
+      photoInputGallery.value = "";
     });
   }
 
@@ -1078,8 +1129,10 @@
       try{ await window.storage.set("report-photo:"+reportId, pendingPhotoDataUrl, true); }catch(e){}
     }
     document.getElementById("desc-input").value = "";
-    document.getElementById("photo-input").value = "";
+    document.getElementById("photo-input-camera").value = "";
+    document.getElementById("photo-input-gallery").value = "";
     document.getElementById("photo-preview").style.display = "none";
+    document.getElementById("photo-remove-btn").style.display = "none";
     document.getElementById("record-preview").style.display = "none";
     document.getElementById("record-status").textContent = "";
     if(recordBtn){ recordBtn.textContent = "Avvia registrazione"; }
